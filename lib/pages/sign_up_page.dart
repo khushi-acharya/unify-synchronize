@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import '../utils/app_colors.dart';
 import '../widgets/common_widgets.dart';
+import '../services/auth_service.dart';
 
 class SignUpPage extends StatefulWidget {
   const SignUpPage({super.key});
@@ -39,11 +40,37 @@ class _SignUpPageState extends State<SignUpPage> {
           color: AppColors.orange, icon: Icons.warning_outlined);
       return;
     }
+    
+    if (_passCtrl.text != _confirmCtrl.text) {
+      showAppSnackbar(context, 'Passwords do not match',
+          color: AppColors.orange, icon: Icons.warning_outlined);
+      return;
+    }
+    
     setState(() => _loading = true);
-    await Future.delayed(const Duration(milliseconds: 1000));
-    if (mounted) {
-      setState(() => _loading = false);
-      Navigator.pushReplacementNamed(context, '/home');
+    
+    try {
+      await AuthService().signUp(
+        email: _emailCtrl.text.trim(),
+        password: _passCtrl.text,
+      );
+      
+      if (mounted) {
+        Navigator.pushReplacementNamed(context, '/home');
+      }
+    } catch (e) {
+      if (mounted) {
+        showAppSnackbar(
+          context,
+          e.toString().replaceAll('Exception: ', ''),
+          color: AppColors.orange,
+          icon: Icons.error_outline,
+        );
+      }
+    } finally {
+      if (mounted) {
+        setState(() => _loading = false);
+      }
     }
   }
 

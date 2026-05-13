@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import '../utils/app_colors.dart';
 import '../models/mock_data.dart';
 import '../widgets/common_widgets.dart';
+import '../services/application_service.dart';
 
 class ProjectDetailPage extends StatefulWidget {
   final Project project;
@@ -15,7 +16,9 @@ class _ProjectDetailPageState extends State<ProjectDetailPage> {
   bool _applied = false;
   bool _isFavorited = false;
   int _selectedTab = 0;
+  bool _isSubmitting = false;
   final _tabs = ['Overview', 'Team', 'Roles'];
+  final _appService = ApplicationService();
 
   @override
   void initState() {
@@ -23,11 +26,37 @@ class _ProjectDetailPageState extends State<ProjectDetailPage> {
     _isFavorited = widget.project.isFavorited;
   }
 
-  void _applyToProject(String role) {
-    Navigator.pop(context);
-    setState(() => _applied = true);
-    showAppSnackbar(context, 'Application sent for $role!',
-        icon: Icons.check_circle_outline);
+  void _applyToProject(String role) async {
+    if (_isSubmitting) return;
+    
+    setState(() => _isSubmitting = true);
+    try {
+      await _appService.submitApplication(
+        projectId: widget.project.id,
+        projectName: widget.project.title,
+        role: role,
+      );
+      
+      if (mounted) {
+        Navigator.pop(context);
+        setState(() => _applied = true);
+        showAppSnackbar(context, 'Application sent for $role!',
+            icon: Icons.check_circle_outline);
+      }
+    } catch (e) {
+      if (mounted) {
+        showAppSnackbar(
+          context,
+          e.toString().replaceAll('Exception: ', ''),
+          color: AppColors.orange,
+          icon: Icons.error_outline,
+        );
+      }
+    } finally {
+      if (mounted) {
+        setState(() => _isSubmitting = false);
+      }
+    }
   }
 
   void _showApplyDialog() {
@@ -51,7 +80,7 @@ class _ProjectDetailPageState extends State<ProjectDetailPage> {
                         fontSize: 18,
                         fontWeight: FontWeight.w700)),
                 IconButton(
-                  onPressed: () => Navigator.pop(ctx),
+                  onPressed: _isSubmitting ? null : () => Navigator.pop(ctx),
                   icon: const Icon(Icons.close, color: AppColors.textMuted),
                 ),
               ],
@@ -73,7 +102,7 @@ class _ProjectDetailPageState extends State<ProjectDetailPage> {
             ...widget.project.openRoles.map((role) => Padding(
                   padding: const EdgeInsets.only(bottom: 8),
                   child: GestureDetector(
-                    onTap: () => _applyToProject(role),
+                    onTap: _isSubmitting ? null : () => _applyToProject(role),
                     child: Container(
                       padding: const EdgeInsets.all(14),
                       decoration: BoxDecoration(

@@ -1,8 +1,10 @@
 import 'package:flutter/material.dart';
+import '../services/project_service.dart';
+import '../services/auth_service.dart';
 import '../utils/app_colors.dart';
 import '../models/mock_data.dart';
 import '../widgets/common_widgets.dart';
-import 'project_detail_page.dart';
+import 'firestore_project_detail_page.dart';
 import 'notifications_page.dart';
 import 'new_project_page.dart';
 
@@ -20,13 +22,23 @@ class _ExplorePageState extends State<ExplorePage> {
   String _searchQuery = '';
   bool _showFavoritesOnly = false;
 
-  final _categories = ['All Projects', 'Art', 'Games', 'Music', 'Apps'];
-  final _data = MockDataService();
+  final _categories = ['All', 'Art', 'Games', 'Music', 'Apps'];
 
-  List<Project> get _filteredProjects {
+  List<FirestoreProject> _filterProjects(List<FirestoreProject> projects) {
     final cat = _categories[_selectedCategory];
-    var list = _data.filterProjects(cat, _searchQuery);
-    if (_showFavoritesOnly) list = list.where((p) => p.isFavorited).toList();
+    var list = projects;
+    
+    if (cat != 'All') {
+      list = list.where((p) => p.category.toLowerCase() == cat.toLowerCase()).toList();
+    }
+    
+    if (_searchQuery.isNotEmpty) {
+      list = list.where((p) => 
+        p.title.toLowerCase().contains(_searchQuery.toLowerCase()) ||
+        p.description.toLowerCase().contains(_searchQuery.toLowerCase())
+      ).toList();
+    }
+    
     return list;
   }
 
@@ -45,10 +57,11 @@ class _ExplorePageState extends State<ExplorePage> {
     );
   }
 
-  void _openProject(Project project) {
+  void _openProject(FirestoreProject project) {
     Navigator.push(
       context,
-      MaterialPageRoute(builder: (_) => ProjectDetailPage(project: project)),
+      MaterialPageRoute(
+          builder: (_) => FirestoreProjectDetailPage(project: project)),
     ).then((_) => setState(() {}));
   }
 
@@ -129,7 +142,7 @@ class _ExplorePageState extends State<ExplorePage> {
 
   @override
   Widget build(BuildContext context) {
-    final projects = _filteredProjects;
+    final userId = AuthService().getCurrentUser()?.uid;
     return Scaffold(
       backgroundColor: AppColors.background,
       body: SafeArea(
@@ -140,32 +153,49 @@ class _ExplorePageState extends State<ExplorePage> {
             _buildSearchBar(),
             _buildCategoryTabs(),
             Expanded(
-              child: projects.isEmpty
-                  ? EmptyState(
-                      icon: Icons.search_off,
-                      title: _showFavoritesOnly
-                          ? 'No favorites yet'
-                          : 'No projects found',
-                      subtitle: _showFavoritesOnly
-                          ? 'Bookmark projects to see them here.'
-                          : 'Try a different search or category.',
-                      actionLabel:
-                          _showFavoritesOnly ? 'Browse All' : null,
-                      onAction: () =>
-                          setState(() => _showFavoritesOnly = false),
-                    )
-                  : RefreshIndicator(
-                      color: AppColors.teal,
-                      backgroundColor: AppColors.card,
-                      onRefresh: () async =>
-                          await Future.delayed(const Duration(seconds: 1)),
-                      child: ListView.builder(
-                        padding: const EdgeInsets.fromLTRB(20, 0, 20, 100),
-                        itemCount: projects.length,
-                        itemBuilder: (context, i) =>
-                            _buildProjectCard(projects[i]),
+              child: StreamBuilder<List<FirestoreProject>>(
+                stream: ProjectService().streamProjects(),
+                builder: (context, snapshot) {
+                  if (snapshot.connectionState == ConnectionState.waiting) {
+                    return const Center(
+                      child: CircularProgressIndicator(color: AppColors.teal),
+                    );
+                  }
+
+                  if (snapshot.hasError) {
+                    return Center(
+                      child: Text(
+                        'Error loading projects',
+                        style: const TextStyle(color: AppColors.textMuted),
                       ),
+                    );
+                  }
+
+                  final allProjects = snapshot.data ?? [];
+                  final filtered = _filterProjects(allProjects);
+
+                  if (filtered.isEmpty) {
+                    return EmptyState(
+                      icon: Icons.search_off,
+                      title: 'No projects found',
+                      subtitle: 'Try a different search or category.',
+                    );
+                  }
+
+                  return RefreshIndicator(
+                    color: AppColors.teal,
+                    backgroundColor: AppColors.card,
+                    onRefresh: () async =>
+                        await Future.delayed(const Duration(seconds: 1)),
+                    child: ListView.builder(
+                      padding: const EdgeInsets.fromLTRB(20, 0, 20, 100),
+                      itemCount: filtered.length,
+                      itemBuilder: (context, i) =>
+                          _buildProjectCard(filtered[i]),
                     ),
+                  );
+                },
+              ),
             ),
           ],
         ),
@@ -181,7 +211,7 @@ class _ExplorePageState extends State<ExplorePage> {
   }
 
   Widget _buildHeader() {
-    final unread = _data.unreadNotificationCount;
+    final unread = 0; // Notifications feature coming soon
     return Padding(
       padding: const EdgeInsets.fromLTRB(20, 20, 20, 4),
       child: Row(
@@ -344,7 +374,21 @@ class _ExplorePageState extends State<ExplorePage> {
     );
   }
 
-  Widget _buildProjectCard(Project project) {
+  Widget _buildProjectCard(FirestoreProject project) {
+    final category = project.category.toLowerCase();
+    final icon = {
+      'art': Icons.palette_outlined,
+      'games': Icons.sports_esports_outlined,
+      'music': Icons.music_note_outlined,
+      'apps': Icons.phone_android_outlined,
+    }[category] ?? Icons.folder_outlined;
+    final backgroundColor = {
+      'art': const Color(0xFF0D3D30),
+      'games': const Color(0xFF1A2035),
+      'music': const Color(0xFF1A1535),
+      'apps': const Color(0xFF1A2520),
+    }[category] ?? const Color(0xFF2A1535);
+
     return Container(
       margin: const EdgeInsets.only(bottom: 16),
       decoration: BoxDecoration(
@@ -355,18 +399,17 @@ class _ExplorePageState extends State<ExplorePage> {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          // Image area
           Stack(
             children: [
               Container(
                 height: 140,
                 decoration: BoxDecoration(
-                  color: project.cardColor,
+                  color: backgroundColor,
                   borderRadius:
                       const BorderRadius.vertical(top: Radius.circular(16)),
                 ),
                 child: Center(
-                  child: Icon(project.icon,
+                  child: Icon(icon,
                       size: 56,
                       color: AppColors.teal.withOpacity(0.3)),
                 ),
@@ -382,36 +425,12 @@ class _ExplorePageState extends State<ExplorePage> {
                     borderRadius: BorderRadius.circular(6),
                   ),
                   child: Text(
-                    project.category,
+                    project.category.toUpperCase(),
                     style: const TextStyle(
                         color: AppColors.teal,
                         fontSize: 11,
                         fontWeight: FontWeight.w700,
                         letterSpacing: 1),
-                  ),
-                ),
-              ),
-              Positioned(
-                top: 12,
-                right: 12,
-                child: GestureDetector(
-                  onTap: () => _toggleFavorite(project),
-                  child: Container(
-                    width: 36,
-                    height: 36,
-                    decoration: BoxDecoration(
-                      color: AppColors.card,
-                      shape: BoxShape.circle,
-                      border: Border.all(color: AppColors.border),
-                    ),
-                    child: Icon(
-                        project.isFavorited
-                            ? Icons.bookmark
-                            : Icons.bookmark_border,
-                        size: 17,
-                        color: project.isFavorited
-                            ? AppColors.teal
-                            : AppColors.textMuted),
                   ),
                 ),
               ),
@@ -422,58 +441,41 @@ class _ExplorePageState extends State<ExplorePage> {
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                Row(
-                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                  children: [
-                    Expanded(
-                      child: Text(
-                        project.title,
-                        style: const TextStyle(
-                            color: AppColors.textPrimary,
-                            fontSize: 17,
-                            fontWeight: FontWeight.w700),
-                      ),
-                    ),
-                    MemberAvatarStack(count: project.membersCount),
-                  ],
+                Text(
+                  project.title,
+                  style: const TextStyle(
+                      color: AppColors.textPrimary,
+                      fontSize: 17,
+                      fontWeight: FontWeight.w700),
                 ),
                 const SizedBox(height: 6),
                 Text(project.description,
+                    maxLines: 2,
+                    overflow: TextOverflow.ellipsis,
                     style: const TextStyle(
                         color: AppColors.textMuted,
                         fontSize: 13,
                         height: 1.5)),
-                const SizedBox(height: 14),
+                const SizedBox(height: 10),
                 Row(
-                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
                   children: [
-                    Text(project.progressLabel,
-                        style: const TextStyle(
-                            color: AppColors.textMuted,
-                            fontSize: 12,
-                            fontWeight: FontWeight.w600)),
+                    const Icon(Icons.work_outline,
+                        color: AppColors.textMuted, size: 13),
+                    const SizedBox(width: 5),
                     Text(
-                        '${(project.progress * 100).toInt()}%',
+                        '${project.openRoles.length} open role${project.openRoles.length != 1 ? 's' : ''}',
                         style: const TextStyle(
-                            color: AppColors.teal,
-                            fontSize: 12,
-                            fontWeight: FontWeight.w700)),
+                            color: AppColors.textMuted, fontSize: 12)),
                   ],
                 ),
-                const SizedBox(height: 6),
-                AppProgressBar(value: project.progress),
-                if (project.openRoles.isNotEmpty) ...[
-                  const SizedBox(height: 10),
-                  Row(
-                    children: [
-                      const Icon(Icons.work_outline,
-                          color: AppColors.textMuted, size: 13),
-                      const SizedBox(width: 5),
-                      Text(
-                          '${project.openRoles.length} open role${project.openRoles.length > 1 ? 's' : ''}',
-                          style: const TextStyle(
-                              color: AppColors.textMuted, fontSize: 12)),
-                    ],
+                if (project.ownerName != null) ...[
+                  const SizedBox(height: 8),
+                  Text(
+                    'by ${project.ownerName}',
+                    style: const TextStyle(
+                        color: AppColors.textSecondary,
+                        fontSize: 12,
+                        fontWeight: FontWeight.w500),
                   ),
                 ],
                 const SizedBox(height: 14),

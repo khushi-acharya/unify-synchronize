@@ -1,9 +1,12 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import '../services/auth_service.dart';
+import '../services/project_service.dart';
 import '../utils/app_colors.dart';
 import '../models/mock_data.dart';
 import '../widgets/common_widgets.dart';
 import 'edit_profile_page.dart';
+import 'firestore_project_detail_page.dart';
 import 'new_project_page.dart';
 import 'settings_page.dart';
 
@@ -20,27 +23,35 @@ class _ProfilePageState extends State<ProfilePage> {
   final _tabs = ['All Projects', 'Case Studies', 'Drafts'];
   final _data = MockDataService();
 
-  List<PortfolioItem> get _filteredItems {
-    final all = _data.portfolioItems;
-    switch (_tabIndex) {
-      case 1:
-        return all.where((i) => i.tag != null).toList();
-      case 2:
-        return [];
-      default:
-        return all;
-    }
+  String _nameFromEmail(String email) {
+    final local = email.split('@').first;
+    // replace dots/underscores/hyphens with spaces
+    final cleaned = local.replaceAll(RegExp(r'[._\-]+'), ' ').trim();
+    if (cleaned.isEmpty) return email;
+    final parts = cleaned.split(' ');
+    final capitalized = parts.map((p) {
+      if (p.isEmpty) return '';
+      return p[0].toUpperCase() + (p.length > 1 ? p.substring(1) : '');
+    }).where((s) => s.isNotEmpty).toList();
+    return capitalized.join(' ');
   }
 
   @override
   Widget build(BuildContext context) {
+    final user = AuthService().getCurrentUser();
+    final email = user?.email;
+    final authName = user?.displayName;
+    final profileName = authName?.trim().isNotEmpty == true
+        ? authName!
+        : (email != null ? _nameFromEmail(email) : null);
+
     return Scaffold(
       backgroundColor: AppColors.background,
       body: SafeArea(
         child: SingleChildScrollView(
           child: Column(
             children: [
-              _buildHeader(context),
+              _buildHeader(context, profileName),
               Padding(
                 padding: const EdgeInsets.symmetric(horizontal: 20),
                 child: Column(
@@ -53,7 +64,7 @@ class _ProfilePageState extends State<ProfilePage> {
                     const SizedBox(height: 16),
                     _buildTabBar(),
                     const SizedBox(height: 16),
-                    _buildPortfolioGrid(),
+                    _buildPortfolioSection(),
                     const SizedBox(height: 20),
                     _buildRecentActivity(),
                     const SizedBox(height: 20),
@@ -67,7 +78,7 @@ class _ProfilePageState extends State<ProfilePage> {
     );
   }
 
-  Widget _buildHeader(BuildContext context) {
+  Widget _buildHeader(BuildContext context, String? profileName) {
     return Container(
       padding: const EdgeInsets.all(20),
       decoration: const BoxDecoration(
@@ -155,7 +166,7 @@ class _ProfilePageState extends State<ProfilePage> {
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    Text(_data.currentUser.name,
+                    Text(profileName ?? _data.currentUser.name,
                         style: const TextStyle(
                             color: AppColors.textPrimary,
                             fontSize: 22,
@@ -286,7 +297,7 @@ class _ProfilePageState extends State<ProfilePage> {
         const SizedBox(width: 10),
         _statChip('${_data.currentUser.followingCount}', 'Following'),
         const SizedBox(width: 10),
-        _statChip('${_data.currentUser.projectsCount}', 'Projects'),
+        _buildProjectsStatChip(),
       ],
     );
   }
@@ -314,6 +325,21 @@ class _ProfilePageState extends State<ProfilePage> {
           ],
         ),
       ),
+    );
+  }
+
+  Widget _buildProjectsStatChip() {
+    final userId = AuthService().getCurrentUser()?.uid;
+    if (userId == null) {
+      return _statChip('0', 'Projects');
+    }
+
+    return StreamBuilder<List<FirestoreProject>>(
+      stream: ProjectService().streamProjectsByOwner(userId),
+      builder: (context, snapshot) {
+        final count = snapshot.data?.length ?? 0;
+        return _statChip('$count', 'Projects');
+      },
     );
   }
 
@@ -402,40 +428,90 @@ class _ProfilePageState extends State<ProfilePage> {
     );
   }
 
-  Widget _buildPortfolioGrid() {
-    final items = _filteredItems;
-    if (items.isEmpty && _tabIndex == 2) {
-      return Container(
-        height: 140,
-        margin: const EdgeInsets.only(bottom: 14),
-        decoration: BoxDecoration(
-          color: AppColors.card,
-          borderRadius: BorderRadius.circular(16),
-          border: Border.all(color: AppColors.border),
-        ),
-        child: Column(
-          mainAxisAlignment: MainAxisAlignment.center,
-          children: const [
-            Icon(Icons.inbox_outlined, color: AppColors.textMuted, size: 32),
-            SizedBox(height: 8),
-            Text('No drafts yet',
-                style: TextStyle(color: AppColors.textMuted, fontSize: 13)),
-          ],
-        ),
+  Widget _buildPortfolioSection() {
+    final userId = AuthService().getCurrentUser()?.uid;
+    if (userId == null) {
+      return const Center(
+        child: Text('Not authenticated',
+            style: TextStyle(color: AppColors.textMuted)),
       );
     }
-    return Column(
-      children: [
-        ...items.map((item) => _buildPortfolioCard(item)).toList(),
-        _buildAddProjectCard(),
-      ],
+    return StreamBuilder<List<FirestoreProject>>(
+      stream: ProjectService().streamProjectsByOwner(userId),
+      builder: (context, snapshot) {
+        if (snapshot.hasError) {
+          return Container(
+            padding: const EdgeInsets.all(20),
+            decoration: BoxDecoration(
+              color: AppColors.card,
+              borderRadius: BorderRadius.circular(16),
+              border: Border.all(color: AppColors.border),
+            ),
+            child: const Text('Unable to load projects. Please try again.',
+                style: TextStyle(color: AppColors.textMuted)),
+          );
+        }
+
+        if (snapshot.connectionState == ConnectionState.waiting) {
+          return const Center(
+            child: CircularProgressIndicator(color: AppColors.teal),
+          );
+        }
+
+        final items = snapshot.data ?? [];
+        if (items.isEmpty) {
+          return Container(
+            height: 140,
+            margin: const EdgeInsets.only(bottom: 14),
+            decoration: BoxDecoration(
+              color: AppColors.card,
+              borderRadius: BorderRadius.circular(16),
+              border: Border.all(color: AppColors.border),
+            ),
+            child: Column(
+              mainAxisAlignment: MainAxisAlignment.center,
+              children: const [
+                Icon(Icons.inbox_outlined, color: AppColors.textMuted, size: 32),
+                SizedBox(height: 8),
+                Text('No public projects yet',
+                    style: TextStyle(color: AppColors.textMuted, fontSize: 13)),
+              ],
+            ),
+          );
+        }
+
+        return Column(
+          children: [
+            ...items.map((item) => _buildProjectCard(item)),
+            _buildAddProjectCard(),
+          ],
+        );
+      },
     );
   }
 
-  Widget _buildPortfolioCard(PortfolioItem item) {
+
+  Widget _buildProjectCard(FirestoreProject project) {
+    final category = project.category.toLowerCase();
+    final icon = {
+      'art': Icons.palette_outlined,
+      'games': Icons.sports_esports_outlined,
+      'music': Icons.music_note_outlined,
+      'apps': Icons.phone_android_outlined,
+    }[category] ?? Icons.folder_outlined;
+    final backgroundColor = {
+      'art': const Color(0xFF0D3D30),
+      'games': const Color(0xFF1A2035),
+      'music': const Color(0xFF1A1535),
+      'apps': const Color(0xFF1A2520),
+    }[category] ?? const Color(0xFF2A1535);
+
     return GestureDetector(
-      onTap: () => showAppSnackbar(context, 'Opening ${item.title}...',
-          icon: Icons.open_in_new),
+      onTap: () => Navigator.push(
+        context,
+        MaterialPageRoute(
+            builder: (_) => FirestoreProjectDetailPage(project: project)),
+      ),
       child: Container(
         margin: const EdgeInsets.only(bottom: 14),
         decoration: BoxDecoration(
@@ -449,37 +525,39 @@ class _ProfilePageState extends State<ProfilePage> {
             Container(
               height: 120,
               decoration: BoxDecoration(
-                color: item.cardColor,
+                color: backgroundColor,
                 borderRadius:
                     const BorderRadius.vertical(top: Radius.circular(16)),
               ),
               child: Stack(
                 children: [
                   Center(
-                      child: Icon(item.icon,
-                          size: 48,
-                          color: AppColors.teal.withOpacity(0.25))),
-                  if (item.tag != null)
-                    Positioned(
-                      top: 12,
-                      left: 12,
-                      child: Container(
-                        padding: const EdgeInsets.symmetric(
-                            horizontal: 10, vertical: 4),
-                        decoration: BoxDecoration(
-                          color: AppColors.tealBg,
-                          borderRadius: BorderRadius.circular(6),
-                          border: Border.all(
-                              color: AppColors.teal.withOpacity(0.4)),
-                        ),
-                        child: Text(item.tag!,
-                            style: const TextStyle(
-                                color: AppColors.teal,
-                                fontSize: 10,
-                                fontWeight: FontWeight.w700,
-                                letterSpacing: 0.5)),
-                      ),
+                    child: Icon(
+                      icon,
+                      size: 48,
+                      color: AppColors.teal.withOpacity(0.25),
                     ),
+                  ),
+                  Positioned(
+                    top: 12,
+                    left: 12,
+                    child: Container(
+                      padding: const EdgeInsets.symmetric(
+                          horizontal: 10, vertical: 4),
+                      decoration: BoxDecoration(
+                        color: AppColors.tealBg,
+                        borderRadius: BorderRadius.circular(6),
+                        border: Border.all(
+                            color: AppColors.teal.withOpacity(0.4)),
+                      ),
+                      child: Text(project.category.toUpperCase(),
+                          style: const TextStyle(
+                              color: AppColors.teal,
+                              fontSize: 10,
+                              fontWeight: FontWeight.w700,
+                              letterSpacing: 0.5)),
+                    ),
+                  ),
                 ],
               ),
             ),
@@ -488,13 +566,15 @@ class _ProfilePageState extends State<ProfilePage> {
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  Text(item.title,
+                  Text(project.title,
                       style: const TextStyle(
                           color: AppColors.textPrimary,
                           fontSize: 16,
                           fontWeight: FontWeight.w700)),
                   const SizedBox(height: 4),
-                  Text(item.description,
+                  Text(project.description,
+                      maxLines: 2,
+                      overflow: TextOverflow.ellipsis,
                       style: const TextStyle(
                           color: AppColors.textMuted,
                           fontSize: 12,
@@ -503,22 +583,12 @@ class _ProfilePageState extends State<ProfilePage> {
                   Row(
                     mainAxisAlignment: MainAxisAlignment.spaceBetween,
                     children: [
-                      Text(item.date,
+                      Text('${project.openRoles.length} open roles',
                           style: const TextStyle(
                               color: AppColors.textMuted, fontSize: 11)),
                       Row(
-                        children: [
-                          if (item.likes != null) ...[
-                            const Icon(Icons.favorite_outline,
-                                color: AppColors.textMuted, size: 14),
-                            const SizedBox(width: 4),
-                            Text('${item.likes}',
-                                style: const TextStyle(
-                                    color: AppColors.textMuted,
-                                    fontSize: 12)),
-                            const SizedBox(width: 12),
-                          ],
-                          const Icon(Icons.arrow_forward,
+                        children: const [
+                          Icon(Icons.arrow_forward,
                               color: AppColors.teal, size: 16),
                         ],
                       ),

@@ -70,6 +70,8 @@ class Application {
   final String status;
   final Color statusColor;
   final String appliedDate;
+  final String applicantEmail;
+  final String applicantName;
 
   Application({
     required this.id,
@@ -78,6 +80,8 @@ class Application {
     required this.status,
     required this.statusColor,
     required this.appliedDate,
+    this.applicantEmail = '',
+    this.applicantName = '',
   });
 }
 

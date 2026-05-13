@@ -1,6 +1,6 @@
 import 'package:flutter/material.dart';
+import '../services/project_service.dart';
 import '../utils/app_colors.dart';
-import '../models/mock_data.dart';
 import '../widgets/common_widgets.dart';
 
 class NewProjectPage extends StatefulWidget {
@@ -40,18 +40,24 @@ class _NewProjectPageState extends State<NewProjectPage> {
   Future<void> _submit() async {
     if (!_formKey.currentState!.validate()) return;
     setState(() => _loading = true);
-    await Future.delayed(const Duration(milliseconds: 600));
-    if (mounted) {
-      // Save the new project into the singleton data service
-      MockDataService().addMyProject(
+
+    try {
+      await ProjectService().createProject(
         title: _titleCtrl.text.trim(),
         description: _descCtrl.text.trim(),
         category: _categories[_categoryIndex],
         openRoles: List.from(_addedRoles),
       );
-      setState(() => _loading = false);
-      // Pop with true so the caller knows to refresh
-      Navigator.pop(context, true);
+
+      if (mounted) {
+        setState(() => _loading = false);
+        Navigator.pop(context, true);
+      }
+    } catch (e) {
+      if (mounted) {
+        setState(() => _loading = false);
+        showAppSnackbar(context, 'Failed to save project. Try again.');
+      }
     }
   }
 

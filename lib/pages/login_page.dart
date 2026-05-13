@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import '../utils/app_colors.dart';
 import '../widgets/common_widgets.dart';
+import '../services/auth_service.dart';
 import 'sign_up_page.dart';
 
 class LoginPage extends StatefulWidget {
@@ -28,10 +29,29 @@ class _LoginPageState extends State<LoginPage> {
   Future<void> _login() async {
     if (!_formKey.currentState!.validate()) return;
     setState(() => _loading = true);
-    await Future.delayed(const Duration(milliseconds: 900));
-    if (mounted) {
-      setState(() => _loading = false);
-      Navigator.pushReplacementNamed(context, '/home');
+    
+    try {
+      await AuthService().signIn(
+        email: _emailCtrl.text.trim(),
+        password: _passCtrl.text,
+      );
+      
+      if (mounted) {
+        Navigator.pushReplacementNamed(context, '/home');
+      }
+    } catch (e) {
+      if (mounted) {
+        showAppSnackbar(
+          context,
+          e.toString().replaceAll('Exception: ', ''),
+          color: AppColors.orange,
+          icon: Icons.error_outline,
+        );
+      }
+    } finally {
+      if (mounted) {
+        setState(() => _loading = false);
+      }
     }
   }
 

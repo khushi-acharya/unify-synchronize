@@ -1,11 +1,12 @@
 import 'package:flutter/material.dart';
+import '../services/project_service.dart';
+import '../services/auth_service.dart';
 import '../utils/app_colors.dart';
-import '../models/mock_data.dart';
 import '../widgets/common_widgets.dart';
 import 'notifications_page.dart';
 import 'applications_page.dart';
 import 'new_project_page.dart';
-import 'project_detail_page.dart';
+import 'firestore_project_detail_page.dart';
 import 'profile_page.dart';
 
 class DashboardPage extends StatefulWidget {
@@ -17,13 +18,91 @@ class DashboardPage extends StatefulWidget {
 }
 
 class _DashboardPageState extends State<DashboardPage> {
-  final _data = MockDataService();
+  @override
+  void dispose() {
+    super.dispose();
+  }
+
+  void _openProject(FirestoreProject project) {
+    Navigator.push(
+      context,
+      MaterialPageRoute(
+          builder: (_) => FirestoreProjectDetailPage(project: project)),
+    ).then((_) => setState(() {}));
+  }
 
   @override
   Widget build(BuildContext context) {
     return Scaffold(
       backgroundColor: AppColors.background,
-      // FIXED: FAB to add a new project from anywhere on the dashboard
+      body: SafeArea(
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            _buildHeader(),
+            Expanded(
+              child: StreamBuilder<List<FirestoreProject>>(
+                stream: ProjectService().streamProjects(),
+                builder: (context, snapshot) {
+                  if (snapshot.connectionState == ConnectionState.waiting) {
+                    return const Center(
+                      child: CircularProgressIndicator(color: AppColors.teal),
+                    );
+                  }
+
+                  if (snapshot.hasError) {
+                    return Center(
+                      child: Text(
+                        'Error loading projects',
+                        style: const TextStyle(color: AppColors.textMuted),
+                      ),
+                    );
+                  }
+
+                  final allProjects = snapshot.data ?? [];
+
+                  if (allProjects.isEmpty) {
+                    return EmptyState(
+                      icon: Icons.inbox_outlined,
+                      title: 'No projects available',
+                      subtitle: 'Create one or check back later.',
+                    );
+                  }
+
+                  final totalRoles = allProjects.fold<int>(
+                      0, (sum, project) => sum + project.openRoles.length);
+
+                  return Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Padding(
+                        padding: const EdgeInsets.fromLTRB(20, 12, 20, 0),
+                        child: _buildSummaryCards(
+                            allProjects.length, totalRoles),
+                      ),
+                      const SizedBox(height: 10),
+                      Expanded(
+                        child: RefreshIndicator(
+                          color: AppColors.teal,
+                          backgroundColor: AppColors.card,
+                          onRefresh: () async =>
+                              await Future.delayed(const Duration(seconds: 1)),
+                          child: ListView.builder(
+                            padding: const EdgeInsets.fromLTRB(20, 0, 20, 100),
+                            itemCount: allProjects.length,
+                            itemBuilder: (context, i) =>
+                                _buildProjectCard(allProjects[i]),
+                          ),
+                        ),
+                      ),
+                    ],
+                  );
+                },
+              ),
+            ),
+          ],
+        ),
+      ),
       floatingActionButton: FloatingActionButton(
         onPressed: () async {
           final added = await Navigator.push<bool>(
@@ -36,566 +115,250 @@ class _DashboardPageState extends State<DashboardPage> {
         },
         backgroundColor: AppColors.teal,
         foregroundColor: Colors.black,
-        elevation: 4,
         child: const Icon(Icons.add),
       ),
-      body: SafeArea(
-        child: RefreshIndicator(
-          color: AppColors.teal,
-          backgroundColor: AppColors.card,
-          onRefresh: () async =>
-              await Future.delayed(const Duration(seconds: 1)),
-          child: SingleChildScrollView(
-            physics: const AlwaysScrollableScrollPhysics(),
-            padding: const EdgeInsets.all(20),
+    );
+  }
+
+  Widget _buildHeader() {
+    final unread = 0;
+    final user = AuthService().getCurrentUser();
+    final email = user?.email ?? '';
+    final name = user?.displayName?.trim().isNotEmpty == true
+        ? user!.displayName!
+        : email.isNotEmpty
+            ? email.split('@').first
+            : 'Creator';
+
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(20, 20, 20, 4),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Expanded(
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                _buildTopBar(),
-                const SizedBox(height: 24),
-                _buildHeading(),
-                const SizedBox(height: 20),
-                _buildStatsRow(),
-                const SizedBox(height: 20),
-                _buildProjectsSection(),
-                const SizedBox(height: 20),
-                _buildProjectProgress(),
-                const SizedBox(height: 20),
-                _buildApplications(),
-                const SizedBox(height: 20),
-                _buildRecentActivity(),
-                const SizedBox(height: 20),
-                _buildUpgradeBanner(),
-                const SizedBox(height: 80), // space for FAB
-              ],
-            ),
-          ),
-        ),
-      ),
-    );
-  }
-
-  Widget _buildTopBar() {
-    final unread = _data.unreadNotificationCount;
-    return Row(
-      mainAxisAlignment: MainAxisAlignment.spaceBetween,
-      children: [
-        AppLogoBar(),
-        Row(
-          children: [
-            // FIXED: Notifications bell navigates to NotificationsPage
-            Stack(
-              children: [
-                GestureDetector(
-                  onTap: () => Navigator.push(
-                      context,
-                      MaterialPageRoute(
-                          builder: (_) => const NotificationsPage())),
-                  child: Container(
-                    width: 38,
-                    height: 38,
-                    decoration: BoxDecoration(
-                      shape: BoxShape.circle,
-                      border: Border.all(color: AppColors.border, width: 1.5),
-                      color: AppColors.card,
-                    ),
-                    child: const Icon(Icons.notifications_outlined,
-                        color: AppColors.textMuted, size: 18),
-                  ),
+                const Text(
+                  'Welcome back,',
+                  style: TextStyle(
+                      color: AppColors.textPrimary,
+                      fontSize: 20,
+                      fontWeight: FontWeight.w500),
                 ),
-                if (unread > 0)
-                  Positioned(
-                    right: 0,
-                    top: 0,
-                    child: Container(
-                      width: 14,
-                      height: 14,
-                      decoration: const BoxDecoration(
-                          color: AppColors.orange, shape: BoxShape.circle),
-                      child: Center(
-                        child: Text('$unread',
-                            style: const TextStyle(
-                                color: Colors.white,
-                                fontSize: 8,
-                                fontWeight: FontWeight.w800)),
-                      ),
-                    ),
-                  ),
-              ],
-            ),
-            const SizedBox(width: 10),
-            // Profile avatar — navigates to ProfilePage
-            GestureDetector(
-              onTap: () => Navigator.push(context,
-                  MaterialPageRoute(builder: (_) => const ProfilePage())),
-              child: Container(
-                width: 38,
-                height: 38,
-                decoration: BoxDecoration(
-                  shape: BoxShape.circle,
-                  border: Border.all(color: AppColors.teal, width: 2),
-                  color: AppColors.tealBg,
-                ),
-                child: const Icon(Icons.person,
-                    color: AppColors.teal, size: 20),
-              ),
-            ),
-          ],
-        ),
-      ],
-    );
-  }
-
-  Widget _buildHeading() {
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        RichText(
-          text: TextSpan(
-            style: const TextStyle(
-                fontSize: 28, fontWeight: FontWeight.w800, letterSpacing: -0.5),
-            children: [
-              const TextSpan(
-                  text: 'Hey, ',
-                  style: TextStyle(color: AppColors.textPrimary)),
-              TextSpan(
-                  text: _data.currentUser.name.split(' ').first,
-                  style: const TextStyle(color: AppColors.teal)),
-              const TextSpan(
-                  text: ' 👋',
-                  style: TextStyle(color: AppColors.textPrimary)),
-            ],
-          ),
-        ),
-        const SizedBox(height: 4),
-        const Text(
-            'Manage your creative trajectory and active collaborations.',
-            style: TextStyle(color: AppColors.textMuted, fontSize: 13)),
-      ],
-    );
-  }
-
-  Widget _buildStatsRow() {
-    return Row(
-      children: [
-        Expanded(
-            child: _statCard('Active Projects', '${_data.myProjects.length}',
-                Icons.rocket_launch_outlined, AppColors.teal)),
-        const SizedBox(width: 10),
-        Expanded(
-            child: _statCard('Applications', '${_data.applications.length}',
-                Icons.send_outlined, AppColors.purple)),
-        const SizedBox(width: 10),
-        Expanded(
-            child: _statCard('Followers', '${_data.currentUser.followersCount}',
-                Icons.people_outline, AppColors.orange)),
-      ],
-    );
-  }
-
-  Widget _statCard(String label, String value, IconData icon, Color color) {
-    return Container(
-      padding: const EdgeInsets.all(14),
-      decoration: BoxDecoration(
-        color: AppColors.card,
-        borderRadius: BorderRadius.circular(14),
-        border: Border.all(color: AppColors.border),
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Icon(icon, color: color, size: 20),
-          const SizedBox(height: 8),
-          Text(value,
-              style: TextStyle(
-                  color: color, fontSize: 22, fontWeight: FontWeight.w800)),
-          const SizedBox(height: 2),
-          Text(label,
-              style:
-                  const TextStyle(color: AppColors.textMuted, fontSize: 11)),
-        ],
-      ),
-    );
-  }
-
-  Widget _buildProjectsSection() {
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        SectionHeader(
-          title: "Your Projects",
-          badge: Container(
-            padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
-            decoration: BoxDecoration(
-                color: AppColors.card,
-                borderRadius: BorderRadius.circular(20),
-                border: Border.all(color: AppColors.border)),
-            child: Row(
-              children: const [
-                Icon(Icons.rocket_launch_outlined,
-                    color: AppColors.teal, size: 13),
-                SizedBox(width: 4),
-                Text('3 Active',
-                    style: TextStyle(
-                        color: AppColors.teal,
-                        fontSize: 11,
-                        fontWeight: FontWeight.w600)),
-              ],
-            ),
-          ),
-          // FIXED: "See all" snackbar replaced with navigation feedback
-          actionLabel: 'New Project',
-          onAction: () async {
-            final added = await Navigator.push<bool>(
-                context, MaterialPageRoute(builder: (_) => const NewProjectPage()));
-            if (added == true && mounted) {
-              setState(() {});
-              showAppSnackbar(context, 'Project created successfully!',
-                  icon: Icons.check_circle_outline);
-            }
-          },
-        ),
-        const SizedBox(height: 12),
-        ..._data.myProjects
-            .map((p) => Padding(
-                  padding: const EdgeInsets.only(bottom: 10),
-                  // FIXED: project rows now navigate to ProjectDetailPage
-                  child: _buildProjectRow(p),
-                ))
-            .toList(),
-      ],
-    );
-  }
-
-  Widget _buildProjectRow(Map<String, dynamic> project) {
-    // Build a stub Project to pass to detail page
-    final stubProject = Project(
-      id: project['title'].toString().toLowerCase().replaceAll(' ', '-'),
-      category: 'Design',
-      title: project['title'] as String,
-      description: 'View full details for ${project['title']}.',
-      progress: project['progress'] as double,
-      progressLabel: '${((project['progress'] as double) * 100).toInt()}% Complete',
-      membersCount: 3,
-      cardColor: AppColors.tealBg,
-      icon: project['icon'] as IconData,
-      status: project['status'] as String,
-      dueDate: 'Dec 31, 2024',
-      openRoles: ['Designer', 'Developer'],
-    );
-
-    return GestureDetector(
-      onTap: () => Navigator.push(
-          context,
-          MaterialPageRoute(
-              builder: (_) => ProjectDetailPage(project: stubProject))),
-      child: Container(
-        padding: const EdgeInsets.all(14),
-        decoration: BoxDecoration(
-          color: AppColors.card,
-          borderRadius: BorderRadius.circular(12),
-          border: Border.all(color: AppColors.border),
-        ),
-        child: Column(
-          children: [
-            Row(
-              children: [
-                Container(
-                  width: 42,
-                  height: 42,
-                  decoration: BoxDecoration(
-                      color: AppColors.tealBg,
-                      borderRadius: BorderRadius.circular(10)),
-                  child: Icon(project['icon'] as IconData,
-                      color: AppColors.teal, size: 20),
-                ),
-                const SizedBox(width: 12),
-                Expanded(
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Text(project['title'] as String,
-                          style: const TextStyle(
-                              color: AppColors.textPrimary,
-                              fontSize: 14,
-                              fontWeight: FontWeight.w600)),
-                      Text(project['role'] as String,
-                          style: const TextStyle(
-                              color: AppColors.textMuted, fontSize: 12)),
-                    ],
-                  ),
-                ),
-                StatusBadge(
-                  label: project['status'] as String,
-                  color: project['statusColor'] as Color,
-                ),
-                const SizedBox(width: 8),
-                const Icon(Icons.chevron_right,
-                    color: AppColors.textMuted, size: 16),
-              ],
-            ),
-            const SizedBox(height: 10),
-            AppProgressBar(value: project['progress'] as double),
-          ],
-        ),
-      ),
-    );
-  }
-
-  Widget _buildProjectProgress() {
-    return AppCard(
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          SectionHeader(
-            title: 'Sprint Progress',
-            actionLabel: 'Full Report',
-            onAction: () =>
-                showAppSnackbar(context, 'Timeline coming soon!'),
-          ),
-          const SizedBox(height: 16),
-          _buildProgressItem(
-              'Neo-Brutalism Kit', 0.85, 'Sprint 3 of 4', 'Due Friday'),
-          const SizedBox(height: 14),
-          _buildProgressItem('Brand Motion Reel', 0.42, 'Scene 12', null),
-          const SizedBox(height: 6),
-          Container(
-            padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
-            decoration: BoxDecoration(
-              color: AppColors.tealBg,
-              borderRadius: BorderRadius.circular(6),
-            ),
-            child: const Text('SCENE 12 COMPLETED',
-                style: TextStyle(
-                    color: AppColors.teal,
-                    fontSize: 10,
-                    fontWeight: FontWeight.w700,
-                    letterSpacing: 0.5)),
-          ),
-        ],
-      ),
-    );
-  }
-
-  Widget _buildProgressItem(
-      String title, double value, String sub1, String? sub2) {
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        Row(
-          mainAxisAlignment: MainAxisAlignment.spaceBetween,
-          children: [
-            Text(title,
-                style: const TextStyle(
-                    color: AppColors.textSecondary,
-                    fontSize: 13,
-                    fontWeight: FontWeight.w500)),
-            Text('${(value * 100).toInt()}%',
-                style: const TextStyle(
-                    color: AppColors.teal,
-                    fontSize: 13,
-                    fontWeight: FontWeight.w700)),
-          ],
-        ),
-        const SizedBox(height: 6),
-        AppProgressBar(value: value),
-        const SizedBox(height: 4),
-        Row(
-          mainAxisAlignment: MainAxisAlignment.spaceBetween,
-          children: [
-            Text(sub1,
-                style: const TextStyle(
-                    color: AppColors.textMuted, fontSize: 11)),
-            if (sub2 != null)
-              Text(sub2,
+                const SizedBox(height: 4),
+                Text(
+                  name,
                   style: const TextStyle(
-                      color: AppColors.textMuted, fontSize: 11)),
-          ],
-        ),
-      ],
-    );
-  }
-
-  Widget _buildApplications() {
-    return AppCard(
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          SectionHeader(
-            title: 'My Applications',
-            actionLabel: 'View All',
-            // FIXED: "View All" navigates to ApplicationsPage
-            onAction: () => Navigator.push(
-                context,
-                MaterialPageRoute(
-                    builder: (_) => const ApplicationsPage())),
+                      color: AppColors.teal,
+                      fontSize: 28,
+                      fontWeight: FontWeight.w800,
+                      letterSpacing: -0.5),
+                ),
+                const SizedBox(height: 6),
+                const Text(
+                  'Your latest real-time projects are listed below.',
+                  style: TextStyle(
+                      color: AppColors.textMuted,
+                      fontSize: 13,
+                      height: 1.4),
+                ),
+              ],
+            ),
           ),
-          const SizedBox(height: 12),
-          ..._data.applications
-              .take(2)
-              .map((app) => Padding(
-                    padding: const EdgeInsets.only(bottom: 8),
-                    child: _buildAppRow(app),
-                  ))
-              .toList(),
-          // FIXED: "See all" link at bottom
-          if (_data.applications.length > 2)
-            Align(
-              alignment: Alignment.centerRight,
-              child: TextButton(
+          Stack(
+            children: [
+              IconButton(
+                icon: const Icon(Icons.notifications_outlined,
+                    color: AppColors.textSecondary, size: 22),
                 onPressed: () => Navigator.push(
                     context,
                     MaterialPageRoute(
-                        builder: (_) => const ApplicationsPage())),
-                child: Text(
-                  '+ ${_data.applications.length - 2} more',
-                  style: const TextStyle(
-                      color: AppColors.teal, fontSize: 12),
-                ),
+                        builder: (_) => const NotificationsPage())),
               ),
-            ),
+              if (unread > 0)
+                Positioned(
+                  right: 8,
+                  top: 8,
+                  child: Container(
+                    width: 16,
+                    height: 16,
+                    decoration: BoxDecoration(
+                        color: AppColors.orange, shape: BoxShape.circle),
+                    child: Center(
+                      child: Text('$unread',
+                          style: const TextStyle(
+                              color: Colors.white,
+                              fontSize: 9,
+                              fontWeight: FontWeight.w800)),
+                    ),
+                  ),
+                ),
+            ],
+          ),
         ],
       ),
     );
   }
 
-  Widget _buildAppRow(Application app) {
-    return GestureDetector(
-      onTap: () => showAppSnackbar(context, 'Viewing application for ${app.role}',
-          icon: Icons.open_in_new),
-      child: Container(
-        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
-        decoration: BoxDecoration(
-          color: AppColors.surface,
-          borderRadius: BorderRadius.circular(10),
+  Widget _buildSummaryCards(int totalProjects, int totalRoles) {
+    return Row(
+      children: [
+        Expanded(
+          child: _buildMetricCard(
+              'Live Projects', '$totalProjects', Icons.hub),
         ),
-        child: Row(
-          mainAxisAlignment: MainAxisAlignment.spaceBetween,
-          children: [
-            Expanded(
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text(app.role,
-                      style: const TextStyle(
-                          color: AppColors.textPrimary,
-                          fontSize: 13,
-                          fontWeight: FontWeight.w600)),
-                  Text(app.projectName,
-                      style: const TextStyle(
-                          color: AppColors.textMuted, fontSize: 11)),
-                ],
-              ),
+        const SizedBox(width: 10),
+        Expanded(
+          child: _buildMetricCard(
+              'Open Roles', '$totalRoles', Icons.group_work),
+        ),
+      ],
+    );
+  }
+
+  Widget _buildMetricCard(String label, String value, IconData icon) {
+    return Container(
+      padding: const EdgeInsets.all(16),
+      decoration: BoxDecoration(
+        color: AppColors.card,
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(color: AppColors.border),
+      ),
+      child: Row(
+        children: [
+          Container(
+            padding: const EdgeInsets.all(10),
+            decoration: BoxDecoration(
+              color: AppColors.tealBg,
+              borderRadius: BorderRadius.circular(12),
             ),
-            StatusBadge(label: app.status, color: app.statusColor),
-          ],
-        ),
+            child: Icon(icon, color: AppColors.teal, size: 20),
+          ),
+          const SizedBox(width: 12),
+          Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(value,
+                  style: const TextStyle(
+                      color: AppColors.textPrimary,
+                      fontSize: 18,
+                      fontWeight: FontWeight.w800)),
+              const SizedBox(height: 4),
+              Text(label,
+                  style: const TextStyle(
+                      color: AppColors.textMuted, fontSize: 12)),
+            ],
+          ),
+        ],
       ),
     );
   }
 
-  Widget _buildRecentActivity() {
-    return AppCard(
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          SectionHeader(
-            title: 'Recent Activity',
-            actionLabel: 'View All',
-            onAction: () =>
-                showAppSnackbar(context, 'Full activity log coming soon!'),
-          ),
-          const SizedBox(height: 14),
-          ...List.generate(
-            _data.recentActivities.take(3).length,
-            (i) {
-              final act = _data.recentActivities[i];
-              return Column(
+  Widget _buildProjectCard(FirestoreProject project) {
+    final category = project.category.toLowerCase();
+    final icon = {
+      'art': Icons.palette_outlined,
+      'games': Icons.sports_esports_outlined,
+      'music': Icons.music_note_outlined,
+      'apps': Icons.phone_android_outlined,
+    }[category] ?? Icons.folder_outlined;
+    final backgroundColor = {
+      'art': const Color(0xFF0D3D30),
+      'games': const Color(0xFF1A2035),
+      'music': const Color(0xFF1A1535),
+      'apps': const Color(0xFF1A2520),
+    }[category] ?? const Color(0xFF2A1535);
+
+    return GestureDetector(
+      onTap: () => _openProject(project),
+      child: Container(
+        margin: const EdgeInsets.only(bottom: 16),
+        decoration: BoxDecoration(
+          color: AppColors.card,
+          borderRadius: BorderRadius.circular(16),
+          border: Border.all(color: AppColors.border),
+        ),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Container(
+              height: 140,
+              decoration: BoxDecoration(
+                color: backgroundColor,
+                borderRadius:
+                    const BorderRadius.vertical(top: Radius.circular(16)),
+              ),
+              child: Stack(
                 children: [
-                  if (i > 0)
-                    const Divider(color: AppColors.border, height: 20),
-                  Row(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Container(
-                        width: 8,
-                        height: 8,
-                        margin: const EdgeInsets.only(top: 4, right: 12),
-                        decoration: BoxDecoration(
-                            color: act.dotColor, shape: BoxShape.circle),
+                  Center(
+                    child: Icon(
+                      icon,
+                      size: 56,
+                      color: AppColors.teal.withOpacity(0.25),
+                    ),
+                  ),
+                  Positioned(
+                    top: 12,
+                    left: 12,
+                    child: Container(
+                      padding: const EdgeInsets.symmetric(
+                          horizontal: 10, vertical: 4),
+                      decoration: BoxDecoration(
+                        color: AppColors.tealBg,
+                        borderRadius: BorderRadius.circular(6),
+                        border: Border.all(
+                            color: AppColors.teal.withOpacity(0.4)),
                       ),
-                      Expanded(
-                        child: Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            Text(act.title,
-                                style: const TextStyle(
-                                    color: AppColors.textPrimary,
-                                    fontSize: 13,
-                                    fontWeight: FontWeight.w600)),
-                            Text(act.subtitle,
-                                style: const TextStyle(
-                                    color: AppColors.textMuted, fontSize: 12)),
-                            const SizedBox(height: 2),
-                            Text(act.time,
-                                style: const TextStyle(
-                                    color: AppColors.textMuted, fontSize: 11)),
-                          ],
-                        ),
+                      child: Text(project.category.toUpperCase(),
+                          style: const TextStyle(
+                              color: AppColors.teal,
+                              fontSize: 10,
+                              fontWeight: FontWeight.w700,
+                              letterSpacing: 0.5)),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+            Padding(
+              padding: const EdgeInsets.all(14),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(project.title,
+                      style: const TextStyle(
+                          color: AppColors.textPrimary,
+                          fontSize: 16,
+                          fontWeight: FontWeight.w700)),
+                  const SizedBox(height: 4),
+                  Text(project.description,
+                      maxLines: 2,
+                      overflow: TextOverflow.ellipsis,
+                      style: const TextStyle(
+                          color: AppColors.textMuted,
+                          fontSize: 12,
+                          height: 1.5)),
+                  const SizedBox(height: 10),
+                  Row(
+                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                    children: [
+                      Text('${project.openRoles.length} open roles',
+                          style: const TextStyle(
+                              color: AppColors.textMuted, fontSize: 11)),
+                      Row(
+                        children: const [
+                          Icon(Icons.arrow_forward,
+                              color: AppColors.teal, size: 16),
+                        ],
                       ),
                     ],
                   ),
                 ],
-              );
-            },
-          ),
-        ],
-      ),
-    );
-  }
-
-  Widget _buildUpgradeBanner() {
-    return Container(
-      padding: const EdgeInsets.all(20),
-      decoration: BoxDecoration(
-        gradient: const LinearGradient(
-          colors: [Color(0xFF0D5C52), Color(0xFF1ECFB3)],
-          begin: Alignment.topLeft,
-          end: Alignment.bottomRight,
-        ),
-        borderRadius: BorderRadius.circular(16),
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          const Text('Scale Your Reach',
-              style: TextStyle(
-                  color: Colors.white,
-                  fontSize: 20,
-                  fontWeight: FontWeight.w800)),
-          const SizedBox(height: 6),
-          const Text(
-              'Upgrade to Pro and collaborate with top-tier agencies.',
-              style: TextStyle(
-                  color: Colors.white70, fontSize: 13, height: 1.4)),
-          const SizedBox(height: 16),
-          ElevatedButton(
-            onPressed: () => showAppSnackbar(
-                context, 'Pro plan coming soon!',
-                icon: Icons.star_outline),
-            style: ElevatedButton.styleFrom(
-              backgroundColor: Colors.white,
-              foregroundColor: AppColors.tealDark,
-              shape: RoundedRectangleBorder(
-                  borderRadius: BorderRadius.circular(10)),
-              padding:
-                  const EdgeInsets.symmetric(horizontal: 20, vertical: 10),
-              elevation: 0,
+              ),
             ),
-            child: const Text('Get Pro Now',
-                style: TextStyle(fontWeight: FontWeight.w700, fontSize: 13)),
-          ),
-        ],
+          ],
+        ),
       ),
     );
   }
